@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "IP Whitelist Blocker",
+  "version": "1.0",
+  "description": "Blocks all network requests unless your current public IP is in the whitelist.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://api.ipify.org/"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

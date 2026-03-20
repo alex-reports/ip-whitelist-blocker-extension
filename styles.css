@@ -1,0 +1,110 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  width: 300px;
+  margin: 0;
+  padding: 15px;
+  background-color: #f4f4f9;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+h2, h3 {
+  margin: 0;
+  color: #333;
+}
+
+.status-box {
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.status-box p {
+  margin: 5px 0;
+  font-weight: bold;
+}
+
+#status {
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.status-allowed { color: #2e7d32; background: #e8f5e9; }
+.status-blocked { color: #c62828; background: #ffebee; }
+.status-disabled { color: #757575; background: #eeeeee; }
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.2s;
+}
+
+#toggle-enabled {
+  background-color: #2196f3;
+  color: white;
+}
+
+#toggle-enabled:hover { background-color: #1976d2; }
+
+#add-current {
+  background-color: #4caf50;
+  color: white;
+}
+
+#add-current:hover { background-color: #388e3c; }
+
+.whitelist-section {
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.remove-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  background-color: #ff5252;
+  color: white;
+}
+
+.add-manual {
+  display: flex; gap: 5px; margin-top: 10px;
+}
+
+input {
+  flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px;
+}
+
+#add-manual-btn {
+  background-color: #607d8b; color: white;
+}

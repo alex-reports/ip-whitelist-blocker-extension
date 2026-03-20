@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>IP Whitelist Blocker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <h2>IP Whitelist Blocker</h2>
+    <div class="status-box">
+      <p>Current IP: <span id="current-ip">Checking...</span></p>
+      <p>Status: <span id="status">Unknown</span></p>
+    </div>
+    
+    <div class="controls">
+      <button id="toggle-enabled">Disable Blocker</button>
+      <button id="add-current">Whitelist Current IP</button>
+    </div>
+    
+    <div class="whitelist-section">
+      <h3>Whitelisted IPs</h3>
+      <ul id="whitelist-list"></ul>
+      <div class="add-manual">
+        <input type="text" id="manual-ip" placeholder="Add IP manually">
+        <button id="add-manual-btn">Add</button>
+      </div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
