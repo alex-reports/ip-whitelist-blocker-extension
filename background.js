@@ -2,24 +2,14 @@ const IP_CHECK_URL = 'https://api.ipify.org?format=json';
 const BLOCK_RULE_ID = 1;
 const ALLOW_RULE_ID = 2;
 
-// Initialize storage and alarms
+// Initialize storage
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(['whitelist', 'enabled'], (result) => {
     if (result.whitelist === undefined) {
       chrome.storage.local.set({ whitelist: [], enabled: true });
     }
   });
-  
-  // Create alarm to check IP every minute
-  chrome.alarms.create('checkIP', { periodInMinutes: 1 });
   checkAndApplyBlocking();
-});
-
-// Listen for alarm
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'checkIP') {
-    checkAndApplyBlocking();
-  }
 });
 
 // Function to check current IP and apply blocking rules
@@ -72,6 +62,18 @@ function applyBlockingRules(shouldBlock) {
     });
   }
 }
+
+// Intercept requests to trigger an IP check before they are processed
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    // Skip if it's the IP check itself to avoid infinite loops
+    if (details.url.includes('api.ipify.org')) return;
+    
+    // Trigger an IP check and rule update
+    checkAndApplyBlocking();
+  },
+  { urls: ["<all_urls>"] }
+);
 
 // Listen for changes in whitelist or enabled status
 chrome.storage.onChanged.addListener((changes) => {

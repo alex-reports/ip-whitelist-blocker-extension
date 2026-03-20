@@ -6,7 +6,7 @@
   "permissions": [
     "declarativeNetRequest",
     "storage",
-    "alarms"
+    "webRequest"
   ],
   "host_permissions": [
     "https://api.ipify.org/"

@@ -3,7 +3,7 @@
 This extension tracks your current public IP address and blocks all outgoing network requests if your IP is not in the whitelist.
 
 ## Features
-- **IP Tracking**: Automatically checks your public IP every minute.
+- **IP Tracking**: Automatically checks your public IP before each network request.
 - **Request Blocking**: Uses Chrome's `declarativeNetRequest` API to block all traffic when you're on an unauthorized IP.
 - **Whitelist Management**: Add or remove IPs from the whitelist via the extension popup.
 - **Kill Switch**: Easily enable or disable the blocker.
