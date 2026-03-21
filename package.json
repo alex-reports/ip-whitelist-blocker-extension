@@ -1,0 +1,16 @@
+{
+  "name": "ip-whitelist-blocker-extension",
+  "version": "1.0.0",
+  "description": "Chrome extension that blocks traffic when your IP is not whitelisted",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "jest": "^27.0.0",
+    "jest-environment-jsdom": "^27.0.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom"
+  }
+}
