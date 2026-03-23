@@ -1,17 +1,23 @@
 {
   "name": "ip-whitelist-blocker-extension",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Chrome extension that blocks traffic when your IP is not whitelisted",
   "scripts": {
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "icons": "node generate-icons.js",
+    "build": "node -e \"const a=require('archiver'),fs=require('fs'),o=fs.createWriteStream('extension.zip'),arch=a('zip',{zlib:{level:9}});o.on('close',()=>console.log('extension.zip created'));arch.pipe(o);arch.glob('**',{ignore:['node_modules/**','tests/**','*.test.js','.git/**','*.zip','generate-icons.js']});arch.finalize();\""
   },
   "devDependencies": {
-    "jest": "^27.0.0",
-    "jest-environment-jsdom": "^27.0.0"
+    "archiver": "^7.0.0",
+    "jest": "^27.5.1",
+    "jest-environment-jsdom": "^27.5.1",
+    "sharp": "^0.33.5"
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "testMatch": ["**/tests/**/*.test.js"]
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
   }
 }
