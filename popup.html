@@ -26,6 +26,7 @@
         <span class="geo-separator" id="geo-sep" style="display:none">·</span>
         <span id="geo-isp"></span>
         <span id="geo-vpn"></span>
+        <span id="geo-private-msg" class="geo-private" style="display:none">🔒 Geo lookup disabled</span>
       </div>
     </div>
 
@@ -88,6 +89,45 @@
       </summary>
       <div class="section-body" style="padding-top: 8px;">
         <ul class="history-list" id="history-list" aria-label="IP address history"></ul>
+      </div>
+    </details>
+
+    <!-- Level 3c: Settings (collapsed by default) -->
+    <details class="section" id="settings-details">
+      <summary aria-expanded="false">
+        <div class="section-title">Settings</div>
+        <span class="chevron" aria-hidden="true">›</span>
+      </summary>
+      <div class="section-body settings-body">
+
+        <!-- Privacy mode toggle -->
+        <label class="setting-row" for="privacy-toggle">
+          <span class="setting-label">
+            <span class="setting-name">Privacy mode</span>
+            <span class="setting-desc">Skip geo lookup — your IP won't be sent to ipwho.is</span>
+          </span>
+          <input
+            type="checkbox"
+            id="privacy-toggle"
+            class="toggle-input"
+            role="switch"
+            aria-checked="false"
+          />
+        </label>
+
+        <!-- Export / Import -->
+        <div class="setting-row setting-row--actions">
+          <span class="setting-label">
+            <span class="setting-name">Backup settings</span>
+            <span class="setting-desc">Export or import your whitelist as JSON</span>
+          </span>
+          <div class="setting-buttons">
+            <button class="btn btn-secondary btn-sm" id="export-btn">Export</button>
+            <button class="btn btn-secondary btn-sm" id="import-btn">Import</button>
+            <input type="file" id="import-input" accept=".json" style="display:none" />
+          </div>
+        </div>
+
       </div>
     </details>
 
