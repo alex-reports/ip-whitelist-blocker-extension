@@ -1,50 +1,76 @@
+// popup.js
+
+// Fix 4: IP validation for manual input
+function isValidIP(ip) {
+  // IPv4: four octets of 1-3 digits
+  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+  // IPv6: hex groups separated by colons (basic check)
+  const ipv6 = /^[0-9a-fA-F:]+$/;
+  return ipv4.test(ip) || ipv6.test(ip);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const currentIpSpan = document.getElementById('current-ip');
-  const statusSpan = document.getElementById('status');
-  const toggleBtn = document.getElementById('toggle-enabled');
+  const statusSpan    = document.getElementById('status');
+  const toggleBtn     = document.getElementById('toggle-enabled');
   const addCurrentBtn = document.getElementById('add-current');
   const whitelistList = document.getElementById('whitelist-list');
   const manualIpInput = document.getElementById('manual-ip');
-  const addManualBtn = document.getElementById('add-manual-btn');
+  const addManualBtn  = document.getElementById('add-manual-btn');
+  const errorBanner   = document.getElementById('error-banner');
 
   function updateUI() {
-    chrome.storage.local.get(['currentIP', 'whitelist', 'enabled'], (result) => {
-      const currentIP = result.currentIP || 'Unknown';
-      const whitelist = result.whitelist || [];
-      const enabled = result.enabled !== false;
+    chrome.storage.local.get(
+      ['currentIP', 'whitelist', 'enabled', 'ruleError', 'lastError'],
+      (result) => {
+        const currentIP = result.currentIP || 'Unknown';
+        const whitelist = result.whitelist || [];
+        const enabled   = result.enabled !== false;
 
-      currentIpSpan.textContent = currentIP;
-      
-      if (enabled === false) {
-        statusSpan.textContent = 'Disabled';
-        statusSpan.className = 'status-disabled';
-        toggleBtn.textContent = 'Enable Blocker';
-      } else if (whitelist.includes(currentIP)) {
-        statusSpan.textContent = 'Allowed (Whitelisted)';
-        statusSpan.className = 'status-allowed';
-        toggleBtn.textContent = 'Disable Blocker';
-      } else {
-        statusSpan.textContent = 'Blocked';
-        statusSpan.className = 'status-blocked';
-        toggleBtn.textContent = 'Disable Blocker';
+        currentIpSpan.textContent = currentIP;
+
+        // Fix 5: show error banner if rule update or IP check failed
+        const errorMsg = result.ruleError || result.lastError;
+        if (errorMsg) {
+          errorBanner.style.display = 'block';
+          errorBanner.textContent   = `⚠️ Warning: ${errorMsg}`;
+        } else {
+          errorBanner.style.display = 'none';
+        }
+
+        if (!enabled) {
+          statusSpan.textContent  = 'Disabled';
+          statusSpan.className    = 'status-disabled';
+          toggleBtn.textContent   = 'Enable Blocker';
+        } else if (whitelist.includes(currentIP)) {
+          statusSpan.textContent  = 'Allowed (Whitelisted)';
+          statusSpan.className    = 'status-allowed';
+          toggleBtn.textContent   = 'Disable Blocker';
+        } else {
+          statusSpan.textContent  = 'Blocked';
+          statusSpan.className    = 'status-blocked';
+          toggleBtn.textContent   = 'Disable Blocker';
+        }
+
+        // Rebuild whitelist list
+        whitelistList.innerHTML = '';
+        whitelist.forEach(ip => {
+          const li        = document.createElement('li');
+          li.textContent  = ip;
+
+          const removeBtn       = document.createElement('button');
+          removeBtn.textContent = 'Remove';
+          removeBtn.className   = 'remove-btn';
+          removeBtn.onclick     = () => {
+            const newWhitelist = whitelist.filter(item => item !== ip);
+            chrome.storage.local.set({ whitelist: newWhitelist }, updateUI);
+          };
+
+          li.appendChild(removeBtn);
+          whitelistList.appendChild(li);
+        });
       }
-
-      // Update whitelist display
-      whitelistList.innerHTML = '';
-      whitelist.forEach(ip => {
-        const li = document.createElement('li');
-        li.textContent = ip;
-        const removeBtn = document.createElement('button');
-        removeBtn.textContent = 'Remove';
-        removeBtn.className = 'remove-btn';
-        removeBtn.onclick = () => {
-          const newWhitelist = whitelist.filter(item => item !== ip);
-          chrome.storage.local.set({ whitelist: newWhitelist }, updateUI);
-        };
-        li.appendChild(removeBtn);
-        whitelistList.appendChild(li);
-      });
-    });
+    );
   }
 
   toggleBtn.onclick = () => {
@@ -58,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.storage.local.get(['currentIP', 'whitelist'], (result) => {
       const currentIP = result.currentIP;
       const whitelist = result.whitelist || [];
-      if (currentIP && !whitelist.includes(currentIP)) {
+      if (currentIP && currentIP !== 'Unknown' && !whitelist.includes(currentIP)) {
         whitelist.push(currentIP);
         chrome.storage.local.set({ whitelist }, updateUI);
       }
@@ -67,19 +93,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
   addManualBtn.onclick = () => {
     const ip = manualIpInput.value.trim();
-    if (ip) {
-      chrome.storage.local.get(['whitelist'], (result) => {
-        const whitelist = result.whitelist || [];
-        if (!whitelist.includes(ip)) {
-          whitelist.push(ip);
-          chrome.storage.local.set({ whitelist }, () => {
-            manualIpInput.value = '';
-            updateUI();
-          });
-        }
-      });
+
+    if (!ip) return;
+
+    // Fix 4: validate IP format before adding
+    if (!isValidIP(ip)) {
+      manualIpInput.style.borderColor = 'red';
+      manualIpInput.title             = 'Invalid IP address format';
+      manualIpInput.placeholder       = 'Invalid IP — try again';
+      setTimeout(() => {
+        manualIpInput.style.borderColor = '';
+        manualIpInput.placeholder       = 'Add IP manually';
+        manualIpInput.title             = '';
+      }, 2000);
+      return;
     }
+
+    chrome.storage.local.get(['whitelist'], (result) => {
+      const whitelist = result.whitelist || [];
+      if (!whitelist.includes(ip)) {
+        whitelist.push(ip);
+        chrome.storage.local.set({ whitelist }, () => {
+          manualIpInput.value = '';
+          updateUI();
+        });
+      }
+    });
   };
+
+  // Allow pressing Enter in the manual IP input
+  manualIpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addManualBtn.click();
+  });
 
   updateUI();
 });
