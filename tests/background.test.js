@@ -22,6 +22,10 @@ global.chrome = {
   webRequest: {
     onBeforeRequest: { addListener: jest.fn() },
   },
+  tabs: {
+    query:  jest.fn().mockResolvedValue([]),
+    reload: jest.fn(),
+  },
 };
 
 function mockFetch(ip, geo = {}) {
@@ -192,6 +196,29 @@ describe('applyBlockingRules', () => {
     const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
     expect(call.removeRuleIds).toEqual([1, 2, 3]);
     expect(call.addRules).toBeUndefined();
+  });
+
+  test('reloads all eligible tabs when blocking is applied', async () => {
+    global.chrome.tabs.query.mockResolvedValueOnce([
+      { id: 1, status: 'complete', url: 'https://meet.google.com/abc' },
+      { id: 2, status: 'complete', url: 'https://example.com' },
+      { id: 3, status: 'complete', url: 'chrome://extensions/' },           // skipped
+      { id: 4, status: 'complete', url: 'chrome-extension://xyz/popup.html' }, // skipped
+    ]);
+
+    await applyBlockingRules(true);
+
+    expect(global.chrome.tabs.reload).toHaveBeenCalledTimes(2);
+    expect(global.chrome.tabs.reload).toHaveBeenCalledWith(1);
+    expect(global.chrome.tabs.reload).toHaveBeenCalledWith(2);
+    expect(global.chrome.tabs.reload).not.toHaveBeenCalledWith(3);
+    expect(global.chrome.tabs.reload).not.toHaveBeenCalledWith(4);
+  });
+
+  test('does NOT reload tabs when unblocking', async () => {
+    await applyBlockingRules(false);
+
+    expect(global.chrome.tabs.reload).not.toHaveBeenCalled();
   });
 
   test('stores ruleError in storage when updateDynamicRules fails', async () => {

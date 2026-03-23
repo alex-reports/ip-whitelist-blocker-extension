@@ -7,10 +7,12 @@
     "declarativeNetRequest",
     "storage",
     "alarms",
-    "webRequest"
+    "webRequest",
+    "tabs"
   ],
   "host_permissions": [
     "https://api.ipify.org/",
+    "http://ip-api.com/",
     "<all_urls>"
   ],
   "background": {

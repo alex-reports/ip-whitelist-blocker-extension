@@ -138,6 +138,15 @@ async function applyBlockingRules(shouldBlock) {
           },
         ],
       });
+
+      // Reload all active tabs to kill existing WebRTC/WebSocket connections,
+      // simulating a real network drop (same behaviour as physical disconnection).
+      const tabs = await chrome.tabs.query({ status: 'complete' });
+      for (const tab of tabs) {
+        if (tab.id && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+          chrome.tabs.reload(tab.id);
+        }
+      }
     } else {
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [RULE_ID_BLOCK, RULE_ID_ALLOW_IPIFY, RULE_ID_ALLOW_IPAPI],
