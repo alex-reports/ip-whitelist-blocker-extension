@@ -1,4 +1,4 @@
-// __tests__/background.test.js
+// tests/background.test.js
 
 global.chrome = {
   storage: {
@@ -13,22 +13,23 @@ global.chrome = {
   },
   runtime: {
     onInstalled: { addListener: jest.fn() },
-    onStartup: { addListener: jest.fn() },
+    onStartup:   { addListener: jest.fn() },
   },
   alarms: {
-    create: jest.fn(),
-    onAlarm: { addListener: jest.fn() },
+    create:   jest.fn(),
+    onAlarm:  { addListener: jest.fn() },
   },
   webRequest: {
     onBeforeRequest: { addListener: jest.fn() },
   },
 };
 
-function mockFetch(ip) {
-  global.fetch = jest.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ ip }),
-  });
+function mockFetch(ip, geo = {}) {
+  global.fetch = jest.fn()
+    // First call → ipify
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ ip }) })
+    // Second call → ip-api.com
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', ...geo }) });
 }
 
 function mockFetchFail() {
@@ -39,7 +40,13 @@ function mockStorage(values) {
   global.chrome.storage.local.get.mockResolvedValue(values);
 }
 
-const { checkAndApplyBlocking, applyBlockingRules, _resetForTesting } = require('../background');
+const {
+  checkAndApplyBlocking,
+  applyBlockingRules,
+  appendHistory,
+  buildHistoryEntry,
+  _resetForTesting,
+} = require('../background');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -49,7 +56,7 @@ beforeEach(() => {
   global.chrome.storage.local.get.mockResolvedValue({});
 });
 
-// ─── checkAndApplyBlocking ───────────────────────────────────────────────────
+// ─── checkAndApplyBlocking ────────────────────────────────────────────────────
 
 describe('checkAndApplyBlocking', () => {
 
@@ -135,38 +142,59 @@ describe('checkAndApplyBlocking', () => {
     );
   });
 
+  test('stores geoInfo in storage after successful fetch', async () => {
+    mockFetch('5.6.7.8', { country: 'DE', city: 'Berlin', isp: 'Telekom', proxy: false, hosting: false });
+    mockStorage({ whitelist: [], enabled: true });
+
+    await checkAndApplyBlocking();
+
+    expect(global.chrome.storage.local.set).toHaveBeenCalledWith(
+      expect.objectContaining({ geoInfo: expect.objectContaining({ country: 'DE' }) })
+    );
+  });
+
 });
 
-// ─── applyBlockingRules ──────────────────────────────────────────────────────
+// ─── applyBlockingRules ───────────────────────────────────────────────────────
 
 describe('applyBlockingRules', () => {
 
-  test('adds 2 rules when shouldBlock=true', async () => {
+  test('adds 3 rules when shouldBlock=true (ipify + ip-api + block)', async () => {
     await applyBlockingRules(true);
 
     const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    expect(call.addRules).toHaveLength(2);
-    expect(call.removeRuleIds).toEqual([1, 2]);
+    expect(call.addRules).toHaveLength(3);
+    expect(call.removeRuleIds).toEqual([1, 2, 3]);
   });
 
-  test('allow rule uses requestDomains (Fix 2)', async () => {
+  test('ipify allow rule uses requestDomains', async () => {
     await applyBlockingRules(true);
 
-    const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    const allowRule = call.addRules.find(r => r.action.type === 'allow');
-    expect(allowRule.condition.requestDomains).toContain('api.ipify.org');
+    const call      = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
+    const allowRule = call.addRules.find(r => r.condition.requestDomains?.includes('api.ipify.org'));
+    expect(allowRule).toBeDefined();
+    expect(allowRule.action.type).toBe('allow');
     expect(allowRule.condition.urlFilter).toBeUndefined();
   });
 
-  test('removes rules when shouldBlock=false', async () => {
+  test('ip-api allow rule uses requestDomains', async () => {
+    await applyBlockingRules(true);
+
+    const call      = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
+    const allowRule = call.addRules.find(r => r.condition.requestDomains?.includes('ip-api.com'));
+    expect(allowRule).toBeDefined();
+    expect(allowRule.action.type).toBe('allow');
+  });
+
+  test('removes all 3 rule IDs when shouldBlock=false', async () => {
     await applyBlockingRules(false);
 
     const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    expect(call.removeRuleIds).toEqual([1, 2]);
+    expect(call.removeRuleIds).toEqual([1, 2, 3]);
     expect(call.addRules).toBeUndefined();
   });
 
-  test('stores ruleError in storage when updateDynamicRules fails (Fix 5)', async () => {
+  test('stores ruleError in storage when updateDynamicRules fails', async () => {
     global.chrome.declarativeNetRequest.updateDynamicRules.mockRejectedValueOnce(
       new Error('Rule limit exceeded')
     );
@@ -184,6 +212,76 @@ describe('applyBlockingRules', () => {
     expect(global.chrome.storage.local.set).toHaveBeenCalledWith(
       expect.objectContaining({ ruleError: null })
     );
+  });
+
+});
+
+// ─── appendHistory ────────────────────────────────────────────────────────────
+
+describe('appendHistory', () => {
+
+  test('appends entry when IP changes', async () => {
+    global.chrome.storage.local.get.mockResolvedValue({ ipHistory: [
+      { ip: '1.1.1.1', ts: 1000 },
+    ]});
+
+    const entry = { ip: '2.2.2.2', ts: 2000, country: 'DE', city: 'Berlin', proxy: false, hosting: false };
+    await appendHistory(entry);
+
+    expect(global.chrome.storage.local.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ipHistory: expect.arrayContaining([
+          expect.objectContaining({ ip: '2.2.2.2' }),
+        ]),
+      })
+    );
+  });
+
+  test('does not append when IP is the same as last entry', async () => {
+    global.chrome.storage.local.get.mockResolvedValue({ ipHistory: [
+      { ip: '1.1.1.1', ts: 1000 },
+    ]});
+
+    await appendHistory({ ip: '1.1.1.1', ts: 2000 });
+
+    expect(global.chrome.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  test('trims history to 50 entries', async () => {
+    const existing = Array.from({ length: 50 }, (_, i) => ({ ip: `10.0.0.${i}`, ts: i }));
+    global.chrome.storage.local.get.mockResolvedValue({ ipHistory: existing });
+
+    await appendHistory({ ip: '99.99.99.99', ts: 9999 });
+
+    const stored = global.chrome.storage.local.set.mock.calls[0][0].ipHistory;
+    expect(stored).toHaveLength(50);
+    expect(stored[stored.length - 1].ip).toBe('99.99.99.99');
+  });
+
+});
+
+// ─── buildHistoryEntry ────────────────────────────────────────────────────────
+
+describe('buildHistoryEntry', () => {
+
+  test('maps ip and geo fields correctly', () => {
+    const geo   = { country: 'US', city: 'NY', isp: 'Comcast', proxy: true, hosting: false };
+    const entry = buildHistoryEntry('1.2.3.4', geo);
+
+    expect(entry.ip).toBe('1.2.3.4');
+    expect(entry.country).toBe('US');
+    expect(entry.city).toBe('NY');
+    expect(entry.isp).toBe('Comcast');
+    expect(entry.proxy).toBe(true);
+    expect(entry.hosting).toBe(false);
+    expect(entry.ts).toBeDefined();
+  });
+
+  test('handles missing geo fields gracefully', () => {
+    const entry = buildHistoryEntry('1.2.3.4', {});
+    expect(entry.country).toBe('');
+    expect(entry.city).toBe('');
+    expect(entry.proxy).toBe(false);
   });
 
 });
