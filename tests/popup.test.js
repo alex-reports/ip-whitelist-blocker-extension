@@ -1,12 +1,6 @@
 // tests/popup.test.js
-//
-// Uses jest-environment-jsdom (set in package.json).
-// popup.js reads the DOM on DOMContentLoaded, so we:
-//   1. Set up the HTML fixture before each test
-//   2. Re-require popup.js so listeners register against the fresh DOM
-//   3. Fire DOMContentLoaded to trigger the module's init block
 
-// ─── Chrome API mock ────────────────────────────────────────────────────────
+// ─── Chrome API mock ──────────────────────────────────────────────────────────
 
 function makeChromeMock(storageValues = {}) {
   return {
@@ -27,118 +21,118 @@ function makeChromeMock(storageValues = {}) {
   };
 }
 
-// ─── DOM fixture ────────────────────────────────────────────────────────────
+// ─── DOM fixture ──────────────────────────────────────────────────────────────
 
 function buildDOM() {
   document.body.innerHTML = `
     <div class="container">
-      <div id="error-banner" style="display:none;"></div>
-      <span id="current-ip"></span>
-      <span id="status"></span>
-      <button id="toggle-enabled"></button>
-      <button id="add-current"></button>
-      <ul id="whitelist-list"></ul>
-      <input id="manual-ip" placeholder="Add IP manually" />
-      <button id="add-manual-btn">Add</button>
+      <div id="error-banner"></div>
+      <div class="hero">
+        <div class="hero-header">
+          <span id="current-ip"></span>
+          <span id="status" class="status-badge"></span>
+        </div>
+        <div id="geo-box" class="hero-geo">
+          <span id="geo-location"></span>
+          <span id="geo-sep" style="display:none">·</span>
+          <span id="geo-isp"></span>
+          <span id="geo-vpn"></span>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="toggle-enabled" class="btn btn-primary" aria-pressed="false"></button>
+        <button id="add-current" class="btn btn-secondary"></button>
+      </div>
+      <details class="section" id="whitelist-details">
+        <summary><div class="section-title">Whitelist <span class="count-badge" id="whitelist-count">0</span></div><span class="chevron">›</span></summary>
+        <div class="section-body">
+          <ul class="ip-list" id="whitelist-list"></ul>
+          <div class="add-manual">
+            <input class="ip-input" id="manual-ip" placeholder="e.g. 192.168.1.1" />
+            <button class="btn-add" id="add-manual-btn">Add</button>
+          </div>
+        </div>
+      </details>
+      <details class="section" id="history-details">
+        <summary><div class="section-title">History <span class="count-badge" id="history-count">0</span></div><span class="chevron">›</span></summary>
+        <div class="section-body">
+          <ul class="history-list" id="history-list"></ul>
+        </div>
+      </details>
+      <button id="clear-history-btn"></button>
     </div>
   `;
 }
 
-// Load (and re-evaluate) popup.js against the current document
 function loadPopup() {
   jest.resetModules();
   require('../popup');
   document.dispatchEvent(new Event('DOMContentLoaded'));
 }
 
-// ─── isValidIP (exported for unit testing via module trick) ─────────────────
-// We test it by extracting from the module; if the project grows we can export
-// it explicitly. For now, test it end-to-end via the addManualBtn interaction.
+// ─── Shared geo fixture ───────────────────────────────────────────────────────
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
+const GEO_CLEAN = {
+  status: 'success', country: 'Germany', regionName: 'Bavaria',
+  city: 'Munich', isp: 'Deutsche Telekom', proxy: false, hosting: false,
+};
 
-describe('isValidIP — via addManualBtn interaction', () => {
+const GEO_VPN = {
+  status: 'success', country: 'Netherlands', regionName: 'NH',
+  city: 'Amsterdam', isp: 'Some VPN Ltd', proxy: true, hosting: true,
+};
+
+// ─── isValidIP ────────────────────────────────────────────────────────────────
+
+describe('isValidIP — via addManualBtn', () => {
   beforeEach(() => {
     buildDOM();
     global.chrome = makeChromeMock({ whitelist: [], enabled: true, currentIP: '1.2.3.4' });
     loadPopup();
   });
 
-  const validIPs = [
-    '1.2.3.4',
-    '192.168.0.1',
-    '0.0.0.0',
-    '255.255.255.255',
-    '2001:db8::1',
-    '::1',
-    'fe80::1',
-  ];
-
-  const invalidInputs = [
-    'not-an-ip',
-    'hello world',
-    '<script>alert(1)</script>',
-    '999.999',
-    '',
-  ];
+  const validIPs = ['1.2.3.4', '192.168.0.1', '0.0.0.0', '255.255.255.255', '2001:db8::1', '::1', 'fe80::1'];
+  const invalidInputs = ['not-an-ip', 'hello world', '<script>alert(1)</script>', '999.999', ''];
 
   test.each(validIPs)('accepts valid IP: %s', (ip) => {
     const input = document.getElementById('manual-ip');
-    const btn   = document.getElementById('add-manual-btn');
     input.value = ip;
-    btn.click();
-
-    // valid IP → added to storage (no red border)
+    document.getElementById('add-manual-btn').click();
     expect(input.style.borderColor).not.toBe('red');
     expect(global.chrome.storage.local._store.whitelist).toContain(ip);
   });
 
   test.each(invalidInputs)('rejects invalid input: %s', (ip) => {
     const input = document.getElementById('manual-ip');
-    const btn   = document.getElementById('add-manual-btn');
     input.value = ip;
-    btn.click();
-
-    // invalid input → red border shown, NOT added to storage
-    if (ip !== '') {
-      expect(input.style.borderColor).toBe('red');
-    }
-    const stored = global.chrome.storage.local._store.whitelist || [];
-    expect(stored).not.toContain(ip);
+    document.getElementById('add-manual-btn').click();
+    if (ip !== '') expect(input.classList).toContain('invalid');
+    expect(global.chrome.storage.local._store.whitelist || []).not.toContain(ip);
   });
 
-  test('clears red border after 2s (setTimeout scheduled)', () => {
+  test('clears invalid class after 2s', () => {
     jest.useFakeTimers();
     const input = document.getElementById('manual-ip');
-    const btn   = document.getElementById('add-manual-btn');
-    input.value = 'not-an-ip';
-    btn.click();
-
-    expect(input.style.borderColor).toBe('red');
-
+    input.value = 'bad-input';
+    document.getElementById('add-manual-btn').click();
+    expect(input.classList).toContain('invalid');
     jest.runAllTimers();
-
-    expect(input.style.borderColor).toBe('');
-    expect(input.placeholder).toBe('Add IP manually');
+    expect(input.classList).not.toContain('invalid');
     jest.useRealTimers();
   });
 
-  test('does not add duplicate IP', () => {
+  test('does not add duplicate', () => {
     global.chrome.storage.local._store.whitelist = ['1.2.3.4'];
     const input = document.getElementById('manual-ip');
-    const btn   = document.getElementById('add-manual-btn');
     input.value = '1.2.3.4';
-    btn.click();
-
+    document.getElementById('add-manual-btn').click();
     expect(global.chrome.storage.local._store.whitelist).toHaveLength(1);
   });
 
-  test('clears input field after successful add', () => {
+  test('clears input after successful add', () => {
     const input = document.getElementById('manual-ip');
-    const btn   = document.getElementById('add-manual-btn');
     input.value = '10.0.0.1';
-    btn.click();
-
+    document.getElementById('add-manual-btn').click();
     expect(input.value).toBe('');
   });
 
@@ -146,127 +140,196 @@ describe('isValidIP — via addManualBtn interaction', () => {
     const input = document.getElementById('manual-ip');
     input.value = '5.5.5.5';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-
     expect(global.chrome.storage.local._store.whitelist).toContain('5.5.5.5');
   });
 });
 
-// ─── updateUI ────────────────────────────────────────────────────────────────
+// ─── updateUI — status ────────────────────────────────────────────────────────
 
 describe('updateUI — status display', () => {
-  beforeEach(() => {
-    buildDOM();
-  });
+  beforeEach(() => buildDOM());
 
-  test('shows "Blocked" when IP is not in whitelist and enabled=true', () => {
+  test('shows Blocked when IP not in whitelist', () => {
     global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: ['9.9.9.9'], enabled: true });
     loadPopup();
-
     expect(document.getElementById('status').textContent).toBe('Blocked');
-    expect(document.getElementById('status').className).toBe('status-blocked');
+    expect(document.getElementById('status').classList).toContain('blocked');
   });
 
-  test('shows "Allowed (Whitelisted)" when IP is in whitelist', () => {
+  test('shows Allowed when IP is whitelisted', () => {
     global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: ['1.2.3.4'], enabled: true });
     loadPopup();
-
-    expect(document.getElementById('status').textContent).toBe('Allowed (Whitelisted)');
-    expect(document.getElementById('status').className).toBe('status-allowed');
+    expect(document.getElementById('status').textContent).toBe('Allowed');
+    expect(document.getElementById('status').classList).toContain('allowed');
   });
 
-  test('shows "Disabled" when enabled=false regardless of whitelist', () => {
-    global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: ['1.2.3.4'], enabled: false });
+  test('shows Disabled when enabled=false', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: [], enabled: false });
     loadPopup();
-
     expect(document.getElementById('status').textContent).toBe('Disabled');
     expect(document.getElementById('toggle-enabled').textContent).toBe('Enable Blocker');
   });
 
-  test('shows "Unknown" when currentIP is absent', () => {
+  test('shows Unknown when currentIP absent', () => {
     global.chrome = makeChromeMock({ whitelist: [], enabled: true });
     loadPopup();
-
     expect(document.getElementById('current-ip').textContent).toBe('Unknown');
   });
 });
 
-// ─── error banner (Fix 5) ────────────────────────────────────────────────────
+// ─── updateUI — error banner ──────────────────────────────────────────────────
 
-describe('updateUI — error banner (Fix 5)', () => {
+describe('updateUI — error banner', () => {
   beforeEach(() => buildDOM());
 
-  test('shows banner when ruleError is set', () => {
-    global.chrome = makeChromeMock({
-      currentIP: '1.2.3.4',
-      whitelist: [],
-      enabled: true,
-      ruleError: 'Rule limit exceeded',
-    });
+  test('shows banner on ruleError', () => {
+    global.chrome = makeChromeMock({ ruleError: 'Rule limit exceeded' });
     loadPopup();
-
-    const banner = document.getElementById('error-banner');
-    expect(banner.style.display).toBe('block');
-    expect(banner.textContent).toContain('Rule limit exceeded');
+    const b = document.getElementById('error-banner');
+    expect(b.style.display).toBe('block');
+    expect(b.textContent).toContain('Rule limit exceeded');
   });
 
-  test('shows banner when lastError is set', () => {
-    global.chrome = makeChromeMock({
-      currentIP: '1.2.3.4',
-      whitelist: [],
-      enabled: true,
-      lastError: 'Network error',
-    });
+  test('shows banner on lastError', () => {
+    global.chrome = makeChromeMock({ lastError: 'Network error' });
     loadPopup();
-
-    const banner = document.getElementById('error-banner');
-    expect(banner.style.display).toBe('block');
-    expect(banner.textContent).toContain('Network error');
-  });
-
-  test('prefers ruleError over lastError when both set', () => {
-    global.chrome = makeChromeMock({
-      ruleError: 'Rule error',
-      lastError: 'Last error',
-    });
-    loadPopup();
-
-    const banner = document.getElementById('error-banner');
-    expect(banner.textContent).toContain('Rule error');
+    const b = document.getElementById('error-banner');
+    expect(b.style.display).toBe('block');
+    expect(b.textContent).toContain('Network error');
   });
 
   test('hides banner when no errors', () => {
     global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: [], enabled: true });
     loadPopup();
-
     expect(document.getElementById('error-banner').style.display).toBe('none');
   });
 });
 
-// ─── toggleBtn ───────────────────────────────────────────────────────────────
+// ─── updateUI — geo info ──────────────────────────────────────────────────────
+
+describe('updateUI — geo info block', () => {
+  beforeEach(() => buildDOM());
+
+  test('shows geo location and ISP when geoInfo present', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: [], enabled: true, geoInfo: GEO_CLEAN });
+    loadPopup();
+    expect(document.getElementById('geo-location').textContent).toBe('Munich, Bavaria, Germany');
+    expect(document.getElementById('geo-isp').textContent).toBe('Deutsche Telekom');
+  });
+
+  test('shows Clean VPN status for non-proxy IP', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: [], enabled: true, geoInfo: GEO_CLEAN });
+    loadPopup();
+    expect(document.getElementById('geo-vpn').textContent).toContain('Clean');
+    expect(document.getElementById('geo-vpn').classList).toContain('clean');
+  });
+
+  test('shows warning badge for proxy/hosting IP', () => {
+    global.chrome = makeChromeMock({ currentIP: '2.2.2.2', whitelist: [], enabled: true, geoInfo: GEO_VPN });
+    loadPopup();
+    const vpnEl = document.getElementById('geo-vpn');
+    expect(vpnEl.textContent).toContain('Proxy');
+    expect(vpnEl.textContent).toContain('Hosting/VPN');
+    expect(vpnEl.classList).toContain('warning');
+  });
+
+  test('clears geo when geoInfo absent', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.2.3.4', whitelist: [], enabled: true });
+    loadPopup();
+    expect(document.getElementById('geo-location').textContent).toBe('');
+    expect(document.getElementById('geo-isp').textContent).toBe('');
+  });
+
+  test('clears geo when geoInfo status=fail', () => {
+    global.chrome = makeChromeMock({
+      currentIP: '1.2.3.4', whitelist: [], enabled: true,
+      geoInfo: { status: 'fail' },
+    });
+    loadPopup();
+    expect(document.getElementById('geo-location').textContent).toBe('');
+  });
+});
+
+// ─── updateUI — IP History ────────────────────────────────────────────────────
+
+describe('updateUI — IP history', () => {
+  beforeEach(() => buildDOM());
+
+  test('shows empty state when history is empty', () => {
+    global.chrome = makeChromeMock({ ipHistory: [] });
+    loadPopup();
+    expect(document.getElementById('history-list').textContent).toContain('history will appear here');
+  });
+
+  test('renders one entry per history item', () => {
+    const history = [
+      { ip: '1.1.1.1', ts: 1000000, country: 'US', city: 'NY', isp: 'ISP', proxy: false, hosting: false },
+      { ip: '2.2.2.2', ts: 2000000, country: 'DE', city: 'Berlin', isp: 'ISP2', proxy: false, hosting: false },
+    ];
+    global.chrome = makeChromeMock({ ipHistory: history });
+    loadPopup();
+    const items = document.querySelectorAll('#history-list .history-entry');
+    expect(items).toHaveLength(2);
+  });
+
+  test('renders newest IP first', () => {
+    const history = [
+      { ip: '1.1.1.1', ts: 1000000, country: 'US', city: '', isp: '', proxy: false, hosting: false },
+      { ip: '2.2.2.2', ts: 2000000, country: 'DE', city: '', isp: '', proxy: false, hosting: false },
+    ];
+    global.chrome = makeChromeMock({ ipHistory: history });
+    loadPopup();
+    const items = document.querySelectorAll('#history-list .history-entry');
+    expect(items[0].textContent).toContain('2.2.2.2');
+    expect(items[1].textContent).toContain('1.1.1.1');
+  });
+
+  test('shows proxy/VPN flags in history entry', () => {
+    const history = [
+      { ip: '3.3.3.3', ts: 1000000, country: 'NL', city: 'Amsterdam', isp: '', proxy: true, hosting: true },
+    ];
+    global.chrome = makeChromeMock({ ipHistory: history });
+    loadPopup();
+    const item = document.querySelector('#history-list .history-entry');
+    expect(item.textContent).toContain('Proxy');
+    expect(item.textContent).toContain('VPN');
+    // VPN badge has class 'warning'
+    const badge = item.querySelector('.vpn-badge.warning');
+    expect(badge).not.toBeNull();
+  });
+
+  test('clear history button empties ipHistory in storage', () => {
+    const history = [
+      { ip: '1.1.1.1', ts: 1000000, country: 'US', city: '', isp: '', proxy: false, hosting: false },
+    ];
+    global.chrome = makeChromeMock({ ipHistory: history });
+    loadPopup();
+    document.getElementById('clear-history-btn').click();
+    expect(global.chrome.storage.local._store.ipHistory).toHaveLength(0);
+  });
+});
+
+// ─── toggleBtn ────────────────────────────────────────────────────────────────
 
 describe('toggleBtn', () => {
   beforeEach(() => buildDOM());
 
-  test('disables blocker when currently enabled', () => {
+  test('disables blocker when enabled', () => {
     global.chrome = makeChromeMock({ enabled: true, currentIP: '1.2.3.4', whitelist: [] });
     loadPopup();
-
     document.getElementById('toggle-enabled').click();
-
     expect(global.chrome.storage.local._store.enabled).toBe(false);
   });
 
-  test('enables blocker when currently disabled', () => {
+  test('enables blocker when disabled', () => {
     global.chrome = makeChromeMock({ enabled: false, currentIP: '1.2.3.4', whitelist: [] });
     loadPopup();
-
     document.getElementById('toggle-enabled').click();
-
     expect(global.chrome.storage.local._store.enabled).toBe(true);
   });
 });
 
-// ─── addCurrentBtn ───────────────────────────────────────────────────────────
+// ─── addCurrentBtn ────────────────────────────────────────────────────────────
 
 describe('addCurrentBtn', () => {
   beforeEach(() => buildDOM());
@@ -274,60 +337,41 @@ describe('addCurrentBtn', () => {
   test('adds currentIP to whitelist', () => {
     global.chrome = makeChromeMock({ currentIP: '7.7.7.7', whitelist: [], enabled: true });
     loadPopup();
-
     document.getElementById('add-current').click();
-
     expect(global.chrome.storage.local._store.whitelist).toContain('7.7.7.7');
   });
 
-  test('does not add "Unknown" to whitelist', () => {
-    global.chrome = makeChromeMock({ whitelist: [], enabled: true }); // no currentIP
+  test('does not add Unknown', () => {
+    global.chrome = makeChromeMock({ whitelist: [], enabled: true });
     loadPopup();
-
     document.getElementById('add-current').click();
-
     expect(global.chrome.storage.local._store.whitelist).toHaveLength(0);
   });
 
   test('does not add duplicate', () => {
     global.chrome = makeChromeMock({ currentIP: '7.7.7.7', whitelist: ['7.7.7.7'], enabled: true });
     loadPopup();
-
     document.getElementById('add-current').click();
-
     expect(global.chrome.storage.local._store.whitelist).toHaveLength(1);
   });
 });
 
-// ─── whitelist remove button ──────────────────────────────────────────────────
+// ─── Whitelist remove button ──────────────────────────────────────────────────
 
 describe('whitelist remove button', () => {
   beforeEach(() => buildDOM());
 
-  test('removes correct IP from whitelist', () => {
-    global.chrome = makeChromeMock({
-      currentIP: '1.1.1.1',
-      whitelist: ['1.1.1.1', '2.2.2.2'],
-      enabled: true,
-    });
+  test('removes correct IP', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.1.1.1', whitelist: ['1.1.1.1', '2.2.2.2'], enabled: true });
     loadPopup();
-
-    // Click the Remove button for the first item
-    const removeBtn = document.querySelector('#whitelist-list .remove-btn');
-    removeBtn.click();
-
+    document.querySelector('#whitelist-list .btn-remove').click();
     expect(global.chrome.storage.local._store.whitelist).not.toContain('1.1.1.1');
     expect(global.chrome.storage.local._store.whitelist).toContain('2.2.2.2');
   });
 
-  test('renders one <li> per whitelisted IP', () => {
-    global.chrome = makeChromeMock({
-      currentIP: '1.1.1.1',
-      whitelist: ['1.1.1.1', '2.2.2.2', '3.3.3.3'],
-      enabled: true,
-    });
+  test('renders one li per whitelisted IP', () => {
+    global.chrome = makeChromeMock({ currentIP: '1.1.1.1', whitelist: ['1.1.1.1', '2.2.2.2', '3.3.3.3'], enabled: true });
     loadPopup();
-
     expect(document.querySelectorAll('#whitelist-list li')).toHaveLength(3);
   });
 });

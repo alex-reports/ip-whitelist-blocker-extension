@@ -4,39 +4,93 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>IP Whitelist Blocker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="container">
-    <div id="error-banner" style="display:none; background:#ffe0e0; color:#900; padding:6px 10px; font-size:12px; border-radius:4px;"></div>
 
-    <h2>IP Whitelist Blocker</h2>
+    <!-- Error banner -->
+    <div id="error-banner" role="alert" aria-live="assertive"></div>
 
-    <div class="status-box">
-      <p>Current IP: <strong id="current-ip">Loading...</strong></p>
-      <p>Status: <span id="status">...</span></p>
-    </div>
-
-    <div class="controls">
-      <button id="toggle-enabled">Disable Blocker</button>
-      <button id="add-current">Add Current IP to Whitelist</button>
-    </div>
-
-    <div class="whitelist-section">
-      <h3>Whitelist</h3>
-      <ul id="whitelist-list"></ul>
-
-      <div class="add-manual">
-        <input
-          type="text"
-          id="manual-ip"
-          placeholder="Add IP manually"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <button id="add-manual-btn">Add</button>
+    <!-- Level 1: Hero — IP + status + geo -->
+    <div class="hero">
+      <div class="hero-header">
+        <span class="hero-ip skeleton" id="current-ip">Loading...</span>
+        <span class="status-badge" id="status" role="status" aria-live="polite"></span>
+      </div>
+      <div class="hero-geo" id="geo-box">
+        <span id="geo-location"></span>
+        <span class="geo-separator" id="geo-sep" style="display:none">·</span>
+        <span id="geo-isp"></span>
+        <span id="geo-vpn"></span>
       </div>
     </div>
+
+    <!-- Level 2: Actions -->
+    <div class="actions">
+      <button
+        class="btn btn-primary"
+        id="toggle-enabled"
+        aria-pressed="false"
+      >
+        Disable Blocker
+      </button>
+      <button class="btn btn-secondary" id="add-current">
+        + Add Current IP to Whitelist
+      </button>
+    </div>
+
+    <!-- Level 3a: Whitelist (collapsed by default) -->
+    <details class="section" id="whitelist-details">
+      <summary aria-expanded="false">
+        <div class="section-title">
+          Whitelist
+          <span class="count-badge" id="whitelist-count">0</span>
+        </div>
+        <span class="chevron" aria-hidden="true">›</span>
+      </summary>
+      <div class="section-body">
+        <ul class="ip-list" id="whitelist-list" aria-label="Whitelisted IP addresses"></ul>
+        <div class="add-manual">
+          <input
+            type="text"
+            class="ip-input"
+            id="manual-ip"
+            placeholder="e.g. 192.168.1.1"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="IP address to add to whitelist"
+          />
+          <button class="btn-add" id="add-manual-btn" aria-label="Add IP to whitelist">Add</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- Level 3b: History (collapsed by default) -->
+    <details class="section" id="history-details">
+      <summary aria-expanded="false">
+        <div class="section-title">
+          History
+          <span class="count-badge" id="history-count">0</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button
+            class="btn-clear"
+            id="clear-history-btn"
+            title="Clear history"
+            aria-label="Clear IP history"
+          >✕</button>
+          <span class="chevron" aria-hidden="true">›</span>
+        </div>
+      </summary>
+      <div class="section-body" style="padding-top: 8px;">
+        <ul class="history-list" id="history-list" aria-label="IP address history"></ul>
+      </div>
+    </details>
+
   </div>
 
   <script src="popup.js"></script>
