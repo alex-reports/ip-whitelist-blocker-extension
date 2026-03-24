@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   WHITELIST:    'whitelist',
   ENABLED:      'enabled',
   PRIVACY_MODE: 'privacyMode',
+  API_KEY:      'abstractApiKey',
   // chrome.storage.local
   CURRENT_IP:   'currentIP',
   GEO_INFO:     'geoInfo',
@@ -26,15 +27,20 @@ function isValidIP(ip) {
 
 // ─── Geo helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * Build a list of threat flag labels from a geo object.
+ * Returns { flags: string[], clean: boolean }
+ * flags contains one label per active threat (VPN, Proxy, Tor, Hosting, Relay).
+ */
 function formatVPN(geo) {
   if (!geo) return null;
   const flags = [];
+  if (geo.vpn)     flags.push('VPN');
   if (geo.proxy)   flags.push('Proxy');
-  if (geo.hosting) flags.push('Hosting/VPN');
   if (geo.tor)     flags.push('Tor');
-  return flags.length
-    ? { label: flags.join(', '), clean: false }
-    : { label: 'Clean', clean: true };
+  if (geo.hosting) flags.push('Hosting');
+  if (geo.relay)   flags.push('Relay');
+  return { flags, clean: flags.length === 0 };
 }
 
 function formatHistoryMeta(entry) {
@@ -156,9 +162,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateUI() {
-    // Read sync keys (whitelist, enabled, privacyMode)
+    // Read sync keys (whitelist, enabled, privacyMode, apiKey)
     chrome.storage.sync.get(
-      [STORAGE_KEYS.WHITELIST, STORAGE_KEYS.ENABLED, STORAGE_KEYS.PRIVACY_MODE],
+      [STORAGE_KEYS.WHITELIST, STORAGE_KEYS.ENABLED, STORAGE_KEYS.PRIVACY_MODE, STORAGE_KEYS.API_KEY],
       (syncResult) => {
         // Read local keys (currentIP, geoInfo, errors, history)
         chrome.storage.local.get(
@@ -168,6 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const whitelist  = syncResult[STORAGE_KEYS.WHITELIST]   || [];
             const enabled    = syncResult[STORAGE_KEYS.ENABLED]     !== false;
             const privMode   = syncResult[STORAGE_KEYS.PRIVACY_MODE] || false;
+            const apiKey     = syncResult[STORAGE_KEYS.API_KEY]     || '';
             const geo        = localResult[STORAGE_KEYS.GEO_INFO]   || null;
             const history    = localResult[STORAGE_KEYS.IP_HISTORY] || [];
 
@@ -200,34 +207,52 @@ document.addEventListener('DOMContentLoaded', () => {
             // ── Hero: Geo ─────────────────────────────────────────────────
             if (privMode) {
               // Privacy mode: geo section shows a static message
-              if (geoLocation)   geoLocation.textContent   = '';
-              if (geoIsp)        geoIsp.textContent        = '';
-              if (geoVpnEl)      geoVpnEl.textContent      = '';
-              if (geoSep)        geoSep.style.display      = 'none';
+              if (geoLocation)   geoLocation.textContent    = '';
+              if (geoIsp)        geoIsp.textContent         = '';
+              if (geoVpnEl)      geoVpnEl.innerHTML         = '';
+              if (geoSep)        geoSep.style.display       = 'none';
               if (geoPrivateMsg) geoPrivateMsg.style.display = '';
             } else if (geo) {
               if (geoPrivateMsg) geoPrivateMsg.style.display = 'none';
               const location = [geo.city, geo.country].filter(Boolean).join(', ');
-              const isp = geo.isp || '';
-              const vpn = formatVPN(geo);
+              const ispLine  = [geo.isp, geo.asn].filter(Boolean).join(' · ');
+              const vpn      = formatVPN(geo);
 
               if (geoLocation) geoLocation.textContent = location;
-              if (geoIsp)      geoIsp.textContent      = isp;
-              if (geoSep)      geoSep.style.display    = (location && isp) ? '' : 'none';
+              if (geoIsp)      geoIsp.textContent      = ispLine;
+              if (geoSep)      geoSep.style.display    = (location && ispLine) ? '' : 'none';
 
-              if (vpn && geoVpnEl) {
-                geoVpnEl.textContent = vpn.clean ? '✓ Clean' : `⚠ ${vpn.label}`;
-                geoVpnEl.className   = `vpn-badge ${vpn.clean ? 'clean' : 'warning'}`;
-              } else if (geoVpnEl) {
-                geoVpnEl.textContent = '';
-                geoVpnEl.className   = '';
+              // Render threat flags or Clean badge
+              if (geoVpnEl) {
+                geoVpnEl.innerHTML = '';
+                if (vpn) {
+                  if (vpn.clean) {
+                    const badge     = document.createElement('span');
+                    badge.className = 'vpn-badge clean';
+                    badge.textContent = '✓ Clean';
+                    geoVpnEl.appendChild(badge);
+                  } else {
+                    vpn.flags.forEach(flag => {
+                      const badge     = document.createElement('span');
+                      badge.className = 'vpn-badge warning';
+                      badge.textContent = `⚠ ${flag}`;
+                      geoVpnEl.appendChild(badge);
+                    });
+                  }
+                }
+              }
+
+              // Show "No API key" hint when Abstract wasn't used (asn field empty)
+              const apiKeyHint = document.getElementById('api-key-hint');
+              if (apiKeyHint) {
+                apiKeyHint.style.display = (!apiKey && !geo.asn) ? '' : 'none';
               }
             } else {
               if (geoPrivateMsg) geoPrivateMsg.style.display = 'none';
-              if (geoLocation)   geoLocation.textContent   = '';
-              if (geoIsp)        geoIsp.textContent        = '';
-              if (geoVpnEl)      geoVpnEl.textContent      = '';
-              if (geoSep)        geoSep.style.display      = 'none';
+              if (geoLocation)   geoLocation.textContent    = '';
+              if (geoIsp)        geoIsp.textContent         = '';
+              if (geoVpnEl)      geoVpnEl.innerHTML         = '';
+              if (geoSep)        geoSep.style.display       = 'none';
             }
 
             // ── Privacy mode toggle state ─────────────────────────────────
@@ -285,12 +310,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 ipLine.className = 'history-ip';
                 ipLine.innerHTML = `<span>${entry.ip}</span>`;
 
-                if (entry.proxy || entry.hosting) {
-                  const badge       = document.createElement('span');
-                  badge.className   = 'vpn-badge warning';
-                  badge.textContent = [entry.proxy && 'Proxy', entry.hosting && 'VPN'].filter(Boolean).join('/');
-                  ipLine.appendChild(badge);
-                }
+                // Show individual threat flags in history entries
+                [
+                  { key: 'vpn',     label: 'VPN' },
+                  { key: 'proxy',   label: 'Proxy' },
+                  { key: 'tor',     label: 'Tor' },
+                  { key: 'hosting', label: 'Hosting' },
+                  { key: 'relay',   label: 'Relay' },
+                ].forEach(({ key, label }) => {
+                  if (entry[key]) {
+                    const badge     = document.createElement('span');
+                    badge.className = 'vpn-badge warning';
+                    badge.textContent = label;
+                    ipLine.appendChild(badge);
+                  }
+                });
 
                 const meta       = document.createElement('div');
                 meta.className   = 'history-meta';
@@ -389,6 +423,48 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  // ── API key save/load ─────────────────────────────────────────────────────
+
+  const apiKeyInput = document.getElementById('api-key-input');
+  const apiKeySave  = document.getElementById('api-key-save');
+
+  if (apiKeyInput) {
+    // Pre-fill input with stored key on open
+    chrome.storage.sync.get([STORAGE_KEYS.API_KEY], (result) => {
+      const key = result[STORAGE_KEYS.API_KEY] || '';
+      // Show masked key: display first 8 chars + asterisks if present
+      apiKeyInput.placeholder = key ? `Saved (${key.slice(0, 8)}…)` : 'Paste Abstract API key';
+    });
+  }
+
+  if (apiKeySave && apiKeyInput) {
+    apiKeySave.onclick = () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) {
+        showError('API key cannot be empty');
+        return;
+      }
+      syncSet(
+        { [STORAGE_KEYS.API_KEY]: key },
+        () => showError('Sync failed — using local storage')
+      );
+      apiKeyInput.value       = '';
+      apiKeyInput.placeholder = `Saved (${key.slice(0, 8)}…)`;
+      // Trigger a fresh IP check so the new key is used immediately
+      chrome.storage.sync.get([STORAGE_KEYS.WHITELIST], () => {
+        // Force re-check by dispatching storage changed (background listens to sync changes)
+        // Simplest approach: write a no-op sync touch
+        chrome.storage.sync.get([STORAGE_KEYS.ENABLED], (r) => {
+          chrome.storage.sync.set({ [STORAGE_KEYS.ENABLED]: r[STORAGE_KEYS.ENABLED] !== false });
+        });
+      });
+    };
+
+    apiKeyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') apiKeySave.click();
+    });
+  }
+
   // ── Clear history ─────────────────────────────────────────────────────────
 
   clearHistoryBtn.onclick = (e) => {
@@ -401,14 +477,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (exportBtn) {
     exportBtn.onclick = () => {
       chrome.storage.sync.get(
-        [STORAGE_KEYS.WHITELIST, STORAGE_KEYS.ENABLED, STORAGE_KEYS.PRIVACY_MODE],
+        [STORAGE_KEYS.WHITELIST, STORAGE_KEYS.ENABLED, STORAGE_KEYS.PRIVACY_MODE, STORAGE_KEYS.API_KEY],
         (result) => {
           const data = {
-            whitelist:   result[STORAGE_KEYS.WHITELIST]   || [],
-            enabled:     result[STORAGE_KEYS.ENABLED]     !== false,
+            whitelist:   result[STORAGE_KEYS.WHITELIST]    || [],
+            enabled:     result[STORAGE_KEYS.ENABLED]      !== false,
             privacyMode: result[STORAGE_KEYS.PRIVACY_MODE] || false,
+            apiKey:      result[STORAGE_KEYS.API_KEY]      || '',
             exportedAt:  new Date().toISOString(),
-            version:     '1.1',
+            version:     '1.2',
           };
           const blob    = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
           const url     = URL.createObjectURL(blob);
@@ -450,14 +527,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // Validate each IP in the imported list
         const validIPs = data.whitelist.filter(ip => typeof ip === 'string' && isValidIP(ip.trim()));
 
-        await syncSet(
-          {
-            [STORAGE_KEYS.WHITELIST]:    validIPs,
-            [STORAGE_KEYS.ENABLED]:      typeof data.enabled === 'boolean' ? data.enabled : true,
-            [STORAGE_KEYS.PRIVACY_MODE]: typeof data.privacyMode === 'boolean' ? data.privacyMode : false,
-          },
-          () => showError('Import saved locally — sync quota exceeded')
-        );
+        const importValues = {
+          [STORAGE_KEYS.WHITELIST]:    validIPs,
+          [STORAGE_KEYS.ENABLED]:      typeof data.enabled === 'boolean' ? data.enabled : true,
+          [STORAGE_KEYS.PRIVACY_MODE]: typeof data.privacyMode === 'boolean' ? data.privacyMode : false,
+        };
+        if (typeof data.apiKey === 'string' && data.apiKey.trim()) {
+          importValues[STORAGE_KEYS.API_KEY] = data.apiKey.trim();
+        }
+        await syncSet(importValues, () => showError('Import saved locally — sync quota exceeded'));
 
         updateUI();
       } catch (err) {
