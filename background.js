@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   WHITELIST:    'whitelist',
   ENABLED:      'enabled',
   PRIVACY_MODE: 'privacyMode',
+  API_KEY:      'abstractApiKey',
   // chrome.storage.local
   CURRENT_IP:   'currentIP',
   GEO_INFO:     'geoInfo',
@@ -22,17 +23,13 @@ const STORAGE_KEYS = {
 const ALARM_NAME           = 'ip-check-fallback';
 const ALARM_PERIOD_MINUTES = 1;
 const RULE_ID_BLOCK        = 1;
-const RULE_ID_ALLOW_IPIFY  = 2;
-const RULE_ID_ALLOW_GEO    = 3;
+const RULE_ID_ALLOW_APIS   = 2; // allows both IP + geo API endpoints
 const DEBOUNCE_MS          = 10000;
 const IP_HISTORY_LIMIT     = 50;
 const FETCH_TIMEOUT_MS     = 5000;
 
-// IP sources tried in order: primary, then fallback
-const IP_SOURCES = [
-  'https://api.ipify.org?format=json',
-  'https://api64.ipify.org?format=json',
-];
+// Single IP source — IPv4 only (api64 would return IPv6 which breaks whitelist matching)
+const IP_SOURCE = 'https://api.ipify.org?format=json';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -57,69 +54,122 @@ async function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
 }
 
 /**
- * Fetch the current public IP address.
- * Tries IP_SOURCES in order: primary, then fallback on any failure.
- * Throws if all sources fail.
+ * Fetch the current public IPv4 address from api.ipify.org.
+ * Throws on failure — caller is responsible for error handling.
  */
 async function fetchIP() {
-  let lastError;
-  for (const source of IP_SOURCES) {
-    try {
-      const res = await fetchWithTimeout(source);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      console.log(`[IP-Guard] IP fetched from ${source}: ${data.ip}`);
-      return data.ip;
-    } catch (err) {
-      console.warn(`[IP-Guard] IP source failed (${source}): ${err.message}`);
-      lastError = err;
-    }
-  }
-  throw lastError || new Error('All IP sources failed');
+  const res = await fetchWithTimeout(IP_SOURCE);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  console.log(`[IP-Guard] Current IP: ${data.ip}`);
+  return data.ip;
 }
 
 /**
- * Fetch geo + ISP + VPN data for a given IP via ipwho.is (HTTPS, free).
- * Returns null when privacy mode is enabled or when the request fails.
+ * Fetch geo data from Abstract API (primary, requires API key).
+ * Returns null on failure so caller can fall back.
  *
- * ipwho.is response shape:
- *   { success, ip, country, city, connection: { isp }, security: { vpn, proxy, tor } }
+ * Abstract API response shape used:
+ *   { ip_address, location.country, location.city, company.name,
+ *     asn.asn, security.is_vpn, security.is_proxy, security.is_tor,
+ *     security.is_hosting, security.is_relay }
  */
-async function fetchGeo(ip, privacyMode = false) {
+async function fetchGeoAbstract(ip, apiKey) {
+  const url = `https://ipgeolocation.abstractapi.com/v1/?api_key=${apiKey}&ip_address=${ip}`;
+  const res  = await fetchWithTimeout(url);
+  if (!res.ok) throw new Error(`Abstract API HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data.ip_address) throw new Error('Abstract API returned invalid response');
+  return {
+    country: data.location?.country || '',
+    city:    data.location?.city    || '',
+    isp:     data.company?.name     || '',
+    asn:     data.asn?.asn ? `AS${data.asn.asn}` : '',
+    vpn:     data.security?.is_vpn     === true,
+    proxy:   data.security?.is_proxy   === true,
+    tor:     data.security?.is_tor     === true,
+    hosting: data.security?.is_hosting === true,
+    relay:   data.security?.is_relay   === true,
+  };
+}
+
+/**
+ * Fetch geo data from freeipapi.com (fallback, no key required).
+ * Returns null on failure.
+ *
+ * freeipapi.com response shape used:
+ *   { ipAddress, countryName, cityName, asnOrganization, isProxy }
+ */
+async function fetchGeoFreeipapi(ip) {
+  const res = await fetchWithTimeout(`https://freeipapi.com/api/json/${ip}`);
+  if (!res.ok) throw new Error(`freeipapi HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data.ipAddress) throw new Error('freeipapi.com returned invalid response');
+  return {
+    country: data.countryName     || '',
+    city:    data.cityName        || '',
+    isp:     data.asnOrganization || '',
+    asn:     '',
+    vpn:     false,
+    proxy:   data.isProxy === true,
+    tor:     false,
+    hosting: false,
+    relay:   false,
+  };
+}
+
+/**
+ * Fetch geo + security data for a given IP.
+ * Strategy:
+ *   1. Privacy mode → return null (no lookup)
+ *   2. API key present → try Abstract API
+ *   3. Abstract fails or no key → try freeipapi.com
+ *   4. Both fail → return null
+ *
+ * Returns a stable geo object: { country, city, isp, asn, vpn, proxy, tor, hosting, relay }
+ */
+async function fetchGeo(ip, privacyMode = false, apiKey = '') {
   if (privacyMode) {
     console.log('[IP-Guard] Privacy mode enabled — skipping geo lookup');
     return null;
   }
+
+  // Try Abstract API first when key is available
+  if (apiKey) {
+    try {
+      const geo = await fetchGeoAbstract(ip, apiKey);
+      console.log(`[IP-Guard] Geo fetched via Abstract API for ${ip}`);
+      return geo;
+    } catch (err) {
+      console.warn(`[IP-Guard] Abstract API failed: ${err.message} — falling back to freeipapi.com`);
+    }
+  }
+
+  // Fallback: freeipapi.com (no key required)
   try {
-    const res = await fetchWithTimeout(`https://ipwho.is/${ip}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (!data.success) throw new Error('ipwho.is returned success=false');
-    // Remap to a stable internal shape (decoupled from API field names)
-    return {
-      country:  data.country   || '',
-      city:     data.city      || '',
-      isp:      data.connection?.isp || '',
-      proxy:    data.security?.proxy || false,
-      hosting:  data.security?.vpn   || false,
-      tor:      data.security?.tor   || false,
-    };
+    const geo = await fetchGeoFreeipapi(ip);
+    console.log(`[IP-Guard] Geo fetched via freeipapi.com for ${ip}`);
+    return geo;
   } catch (err) {
-    console.warn(`[IP-Guard] Geo fetch failed: ${err.message}`);
+    console.warn(`[IP-Guard] freeipapi.com failed: ${err.message}`);
     return null;
   }
 }
 
 /**
- * Orchestrates IP + geo fetch with retry/fallback built into fetchIP().
- * Reads privacyMode from sync storage before deciding whether to call fetchGeo().
+ * Orchestrates IP + geo fetch.
+ * Reads privacyMode and abstractApiKey from sync storage.
  */
 async function fetchIPAndGeo() {
-  const syncResult = await chrome.storage.sync.get([STORAGE_KEYS.PRIVACY_MODE]);
+  const syncResult = await chrome.storage.sync.get([
+    STORAGE_KEYS.PRIVACY_MODE,
+    STORAGE_KEYS.API_KEY,
+  ]);
   const privacyMode = syncResult[STORAGE_KEYS.PRIVACY_MODE] || false;
+  const apiKey      = syncResult[STORAGE_KEYS.API_KEY]      || '';
 
   const ip  = await fetchIP();
-  const geo = await fetchGeo(ip, privacyMode);
+  const geo = await fetchGeo(ip, privacyMode, apiKey);
   return { ip, geo };
 }
 
@@ -129,11 +179,15 @@ function buildHistoryEntry(ip, geo) {
   return {
     ip,
     ts:      Date.now(),
-    country: geo?.country  || '',
-    city:    geo?.city     || '',
-    isp:     geo?.isp      || '',
-    proxy:   geo?.proxy    || false,
-    hosting: geo?.hosting  || false,
+    country: geo?.country || '',
+    city:    geo?.city    || '',
+    isp:     geo?.isp     || '',
+    asn:     geo?.asn     || '',
+    vpn:     geo?.vpn     || false,
+    proxy:   geo?.proxy   || false,
+    tor:     geo?.tor     || false,
+    hosting: geo?.hosting || false,
+    relay:   geo?.relay   || false,
   };
 }
 
@@ -265,24 +319,16 @@ async function applyBlockingRules(shouldBlock) {
   try {
     if (shouldBlock) {
       await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: [RULE_ID_BLOCK, RULE_ID_ALLOW_IPIFY, RULE_ID_ALLOW_GEO],
+        removeRuleIds: [RULE_ID_BLOCK, RULE_ID_ALLOW_APIS],
         addRules: [
           {
-            id:       RULE_ID_ALLOW_IPIFY,
+            // Allow IP-check (ipify.org) + geo endpoints (abstractapi.com primary, freeipapi.com fallback)
+            id:       RULE_ID_ALLOW_APIS,
             priority: 2,
             action:   { type: 'allow' },
             condition: {
-              requestDomains: ['api.ipify.org', 'api64.ipify.org'],
-              resourceTypes:  ['xmlhttprequest', 'main_frame', 'sub_frame'],
-            },
-          },
-          {
-            id:       RULE_ID_ALLOW_GEO,
-            priority: 2,
-            action:   { type: 'allow' },
-            condition: {
-              requestDomains: ['ipwho.is'],
-              resourceTypes:  ['xmlhttprequest', 'main_frame', 'sub_frame'],
+              regexFilter:   '(ipify\\.org|freeipapi\\.com|abstractapi\\.com)',
+              resourceTypes: ['xmlhttprequest'],
             },
           },
           {
@@ -315,7 +361,7 @@ async function applyBlockingRules(shouldBlock) {
       }
     } else {
       await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: [RULE_ID_BLOCK, RULE_ID_ALLOW_IPIFY, RULE_ID_ALLOW_GEO],
+        removeRuleIds: [RULE_ID_BLOCK, RULE_ID_ALLOW_APIS],
       });
     }
     await chrome.storage.local.set({ [STORAGE_KEYS.RULE_ERROR]: null });
@@ -394,7 +440,7 @@ if (typeof module !== 'undefined') {
     updateBadge,
     notifyIPChange,
     STORAGE_KEYS,
-    IP_SOURCES,
+    IP_SOURCE,
     _resetForTesting: () => { lastCheckTime = 0; isChecking = false; },
   };
 }
