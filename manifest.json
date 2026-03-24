@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "IP Whitelist Blocker",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Blocks network traffic when your IP is not whitelisted. Includes geo info, VPN detection, and IP history.",
   "permissions": [
     "declarativeNetRequest",
@@ -9,13 +9,12 @@
     "alarms",
     "webNavigation",
     "tabs",
-    "notifications",
-    "action"
+    "notifications"
   ],
   "host_permissions": [
     "https://api.ipify.org/",
-    "https://api64.ipify.org/",
-    "https://ipwho.is/",
+    "https://ipgeolocation.abstractapi.com/",
+    "https://freeipapi.com/",
     "<all_urls>"
   ],
   "background": {
