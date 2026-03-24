@@ -44,25 +44,21 @@ global.chrome = {
 // ─── Fetch mock helpers ───────────────────────────────────────────────────────
 
 /**
- * Mock a successful IP fetch (ipify) + geo fetch (ipwho.is)
+ * Mock a successful IP fetch (ipify) + geo fetch (freeipapi.com)
  */
 function mockFetch(ip, geo = {}) {
   global.fetch = jest.fn()
-    // First call → ipify (primary)
+    // First call → api.ipify.org
     .mockResolvedValueOnce({ ok: true, json: async () => ({ ip }) })
-    // Second call → ipwho.is geo
+    // Second call → freeipapi.com
     .mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        success: true,
-        country: geo.country || '',
-        city:    geo.city    || '',
-        connection: { isp: geo.isp || '' },
-        security: {
-          vpn:   geo.hosting || false,
-          proxy: geo.proxy   || false,
-          tor:   geo.tor     || false,
-        },
+        ipAddress:       ip,
+        countryName:     geo.country || '',
+        cityName:        geo.city    || '',
+        asnOrganization: geo.isp     || '',
+        isProxy:         geo.proxy   || false,
       }),
     });
 }
@@ -96,7 +92,7 @@ const {
   updateBadge,
   notifyIPChange,
   STORAGE_KEYS,
-  IP_SOURCES,
+  IP_SOURCE,
   _resetForTesting,
 } = require('../background');
 
@@ -150,104 +146,185 @@ describe('fetchWithTimeout', () => {
 // ─── fetchIP ──────────────────────────────────────────────────────────────────
 
 describe('fetchIP', () => {
-  test('returns IP from primary source on success', async () => {
+  test('returns IPv4 address on success', async () => {
     global.fetch = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ ip: '1.2.3.4' }) });
     const ip = await fetchIP();
     expect(ip).toBe('1.2.3.4');
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(global.fetch.mock.calls[0][0]).toBe(IP_SOURCES[0]);
+    expect(global.fetch.mock.calls[0][0]).toBe(IP_SOURCE);
   });
 
-  test('falls back to secondary source when primary fails', async () => {
-    global.fetch = jest.fn()
-      .mockRejectedValueOnce(new Error('Primary failed'))
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ip: '5.6.7.8' }) });
-    const ip = await fetchIP();
-    expect(ip).toBe('5.6.7.8');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+  test('throws on HTTP error status', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({ ok: false, status: 503 });
+    await expect(fetchIP()).rejects.toThrow('HTTP 503');
   });
 
-  test('throws when all sources fail', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('All down'));
-    await expect(fetchIP()).rejects.toThrow();
-    expect(global.fetch).toHaveBeenCalledTimes(IP_SOURCES.length);
-  });
-
-  test('retries on HTTP error status (non-ok response)', async () => {
-    global.fetch = jest.fn()
-      .mockResolvedValueOnce({ ok: false, status: 503 })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ip: '9.9.9.9' }) });
-    const ip = await fetchIP();
-    expect(ip).toBe('9.9.9.9');
+  test('throws on network failure', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('Network down'));
+    await expect(fetchIP()).rejects.toThrow('Network down');
   });
 });
 
 // ─── fetchGeo ─────────────────────────────────────────────────────────────────
 
-describe('fetchGeo', () => {
-  test('fetches geo from ipwho.is and maps fields correctly', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        success: true,
-        country: 'Germany',
-        city:    'Berlin',
-        connection: { isp: 'Deutsche Telekom' },
-        security: { vpn: false, proxy: false, tor: false },
-      }),
-    });
-    const geo = await fetchGeo('1.2.3.4', false);
-    expect(geo.country).toBe('Germany');
-    expect(geo.city).toBe('Berlin');
-    expect(geo.isp).toBe('Deutsche Telekom');
-    expect(geo.hosting).toBe(false);
-    expect(geo.proxy).toBe(false);
-    expect(geo.tor).toBe(false);
-  });
+// Helper: mock a successful Abstract API response
+function mockAbstractResponse(ip, overrides = {}) {
+  return {
+    ok: true,
+    json: async () => ({
+      ip_address: ip,
+      location: {
+        country: overrides.country || 'Germany',
+        city:    overrides.city    || 'Berlin',
+      },
+      company: { name: overrides.isp || 'Deutsche Telekom' },
+      asn:     { asn: overrides.asn || 1234 },
+      security: {
+        is_vpn:     overrides.vpn     || false,
+        is_proxy:   overrides.proxy   || false,
+        is_tor:     overrides.tor     || false,
+        is_hosting: overrides.hosting || false,
+        is_relay:   overrides.relay   || false,
+      },
+    }),
+  };
+}
 
-  test('returns null when privacyMode=true without making any fetch', async () => {
+// Helper: mock a successful freeipapi response
+function mockFreeipApiResponse(ip, overrides = {}) {
+  return {
+    ok: true,
+    json: async () => ({
+      ipAddress:       ip,
+      countryName:     overrides.country || 'Germany',
+      cityName:        overrides.city    || 'Berlin',
+      asnOrganization: overrides.isp     || 'Deutsche Telekom',
+      isProxy:         overrides.proxy   || false,
+    }),
+  };
+}
+
+describe('fetchGeo', () => {
+  // ── Privacy mode ──────────────────────────────────────────────────────────
+
+  test('returns null without any fetch when privacyMode=true', async () => {
     global.fetch = jest.fn();
-    const geo = await fetchGeo('1.2.3.4', true);
+    const geo = await fetchGeo('1.2.3.4', true, 'some-key');
     expect(geo).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test('returns null when ipwho.is returns non-200', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({ ok: false, status: 503 });
-    const geo = await fetchGeo('1.2.3.4', false);
-    expect(geo).toBeNull();
+  // ── Abstract API (primary) ────────────────────────────────────────────────
+
+  test('uses Abstract API when apiKey is provided and maps all fields', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce(
+      mockAbstractResponse('1.2.3.4', { country: 'Germany', city: 'Berlin', isp: 'Deutsche Telekom', asn: 1234 })
+    );
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('abstractapi.com');
+    expect(geo.country).toBe('Germany');
+    expect(geo.city).toBe('Berlin');
+    expect(geo.isp).toBe('Deutsche Telekom');
+    expect(geo.asn).toBe('AS1234');
+    expect(geo.vpn).toBe(false);
+    expect(geo.proxy).toBe(false);
+    expect(geo.tor).toBe(false);
+    expect(geo.hosting).toBe(false);
+    expect(geo.relay).toBe(false);
   });
 
-  test('returns null when ipwho.is returns invalid JSON', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => { throw new SyntaxError('Unexpected token'); },
-    });
-    const geo = await fetchGeo('1.2.3.4', false);
-    expect(geo).toBeNull();
-  });
-
-  test('returns null when ipwho.is returns success=false', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: false }),
-    });
-    const geo = await fetchGeo('1.2.3.4', false);
-    expect(geo).toBeNull();
-  });
-
-  test('maps security.vpn to hosting field', async () => {
-    global.fetch = jest.fn().mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        success: true, country: 'NL', city: 'Amsterdam',
-        connection: { isp: 'Some VPN' },
-        security: { vpn: true, proxy: true, tor: false },
-      }),
-    });
-    const geo = await fetchGeo('2.2.2.2', false);
-    expect(geo.hosting).toBe(true);
+  test('maps Abstract API security flags correctly when all threats true', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce(
+      mockAbstractResponse('1.2.3.4', { vpn: true, proxy: true, tor: true, hosting: true, relay: true })
+    );
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(geo.vpn).toBe(true);
     expect(geo.proxy).toBe(true);
+    expect(geo.tor).toBe(true);
+    expect(geo.hosting).toBe(true);
+    expect(geo.relay).toBe(true);
+  });
+
+  test('falls back to freeipapi when Abstract API returns HTTP 401 (bad key)', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401 })          // Abstract fails
+      .mockResolvedValueOnce(mockFreeipApiResponse('1.2.3.4'));    // freeipapi succeeds
+    const geo = await fetchGeo('1.2.3.4', false, 'bad-key');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(geo).not.toBeNull();
+    expect(geo.country).toBe('Germany');
+    // Fields not available from freeipapi default to empty/false
+    expect(geo.asn).toBe('');
+    expect(geo.vpn).toBe(false);
+    expect(geo.tor).toBe(false);
+    expect(geo.hosting).toBe(false);
+    expect(geo.relay).toBe(false);
+  });
+
+  test('falls back to freeipapi when Abstract API returns HTTP 429 (rate limit)', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValueOnce(mockFreeipApiResponse('1.2.3.4'));
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(geo).not.toBeNull();
+  });
+
+  test('falls back to freeipapi when Abstract API network fails', async () => {
+    global.fetch = jest.fn()
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce(mockFreeipApiResponse('1.2.3.4'));
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(geo).not.toBeNull();
+  });
+
+  test('falls back to freeipapi when Abstract API returns invalid JSON', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => { throw new SyntaxError('bad json'); } })
+      .mockResolvedValueOnce(mockFreeipApiResponse('1.2.3.4'));
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(geo).not.toBeNull();
+    expect(geo.country).toBe('Germany');
+  });
+
+  // ── No API key → freeipapi directly ──────────────────────────────────────
+
+  test('skips Abstract API and goes directly to freeipapi when no apiKey', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce(mockFreeipApiResponse('1.2.3.4'));
+    const geo = await fetchGeo('1.2.3.4', false, '');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toContain('freeipapi');
+    expect(geo.country).toBe('Germany');
+  });
+
+  test('freeipapi: maps isProxy=true to proxy field', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce(
+      mockFreeipApiResponse('2.2.2.2', { proxy: true })
+    );
+    const geo = await fetchGeo('2.2.2.2', false, '');
+    expect(geo.proxy).toBe(true);
+  });
+
+  test('returns null when both Abstract and freeipapi fail', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500 })     // Abstract fails
+      .mockResolvedValueOnce({ ok: false, status: 503 });    // freeipapi fails
+    const geo = await fetchGeo('1.2.3.4', false, 'my-key');
+    expect(geo).toBeNull();
+  });
+
+  test('returns null when no apiKey and freeipapi returns non-200', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({ ok: false, status: 503 });
+    const geo = await fetchGeo('1.2.3.4', false, '');
+    expect(geo).toBeNull();
+  });
+
+  test('returns null when no apiKey and freeipapi returns invalid response', async () => {
+    global.fetch = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    const geo = await fetchGeo('1.2.3.4', false, '');
+    expect(geo).toBeNull();
   });
 });
 
@@ -410,7 +487,7 @@ describe('checkAndApplyBlocking', () => {
   });
 
   test('stores geoInfo in local storage after successful fetch', async () => {
-    mockFetch('5.6.7.8', { country: 'DE', city: 'Berlin', isp: 'Telekom', proxy: false, hosting: false });
+    mockFetch('5.6.7.8', { country: 'DE', city: 'Berlin', isp: 'Telekom', proxy: false });
     mockLocalStorage({ [STORAGE_KEYS.IP_HISTORY]: [] });
     mockSyncStorage({ [STORAGE_KEYS.WHITELIST]: [], [STORAGE_KEYS.ENABLED]: true });
 
@@ -455,38 +532,41 @@ describe('checkAndApplyBlocking', () => {
 // ─── applyBlockingRules ───────────────────────────────────────────────────────
 
 describe('applyBlockingRules', () => {
-  test('adds 3 rules when shouldBlock=true (ipify + geo + block)', async () => {
+  test('adds 2 rules when shouldBlock=true (combined api allow + block)', async () => {
     await applyBlockingRules(true);
 
     const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    expect(call.addRules).toHaveLength(3);
-    expect(call.removeRuleIds).toEqual([1, 2, 3]);
+    expect(call.addRules).toHaveLength(2);
+    expect(call.removeRuleIds).toEqual([1, 2]);
   });
 
-  test('ipify allow rule uses requestDomains including fallback', async () => {
+  test('api allow rule uses regexFilter covering ipify, freeipapi, and abstractapi', async () => {
     await applyBlockingRules(true);
 
     const call      = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    const allowRule = call.addRules.find(r => r.condition.requestDomains?.includes('api.ipify.org'));
+    const allowRule = call.addRules.find(r => r.condition.regexFilter);
     expect(allowRule).toBeDefined();
     expect(allowRule.action.type).toBe('allow');
-    expect(allowRule.condition.requestDomains).toContain('api64.ipify.org');
+    expect(allowRule.condition.regexFilter).toContain('ipify');
+    expect(allowRule.condition.regexFilter).toContain('freeipapi');
+    expect(allowRule.condition.regexFilter).toContain('abstractapi');
   });
 
-  test('geo allow rule uses ipwho.is domain', async () => {
+  test('block rule has higher rule ID and blocks all common resource types', async () => {
     await applyBlockingRules(true);
 
     const call      = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    const allowRule = call.addRules.find(r => r.condition.requestDomains?.includes('ipwho.is'));
-    expect(allowRule).toBeDefined();
-    expect(allowRule.action.type).toBe('allow');
+    const blockRule = call.addRules.find(r => r.action.type === 'block');
+    expect(blockRule).toBeDefined();
+    expect(blockRule.condition.resourceTypes).toContain('main_frame');
+    expect(blockRule.condition.resourceTypes).toContain('xmlhttprequest');
   });
 
-  test('removes all 3 rule IDs when shouldBlock=false', async () => {
+  test('removes both rule IDs when shouldBlock=false', async () => {
     await applyBlockingRules(false);
 
     const call = global.chrome.declarativeNetRequest.updateDynamicRules.mock.calls[0][0];
-    expect(call.removeRuleIds).toEqual([1, 2, 3]);
+    expect(call.removeRuleIds).toEqual([1, 2]);
     expect(call.addRules).toBeUndefined();
   });
 
@@ -563,7 +643,7 @@ describe('appendHistory', () => {
       [STORAGE_KEYS.IP_HISTORY]: [{ ip: '1.1.1.1', ts: 1000 }],
     });
 
-    const entry = { ip: '2.2.2.2', ts: 2000, country: 'DE', city: 'Berlin', proxy: false, hosting: false };
+    const entry = { ip: '2.2.2.2', ts: 2000, country: 'DE', city: 'Berlin', proxy: false };
     await appendHistory(entry);
 
     expect(global.chrome.storage.local.set).toHaveBeenCalledWith(
@@ -602,25 +682,37 @@ describe('appendHistory', () => {
 // ─── buildHistoryEntry ────────────────────────────────────────────────────────
 
 describe('buildHistoryEntry', () => {
-  test('maps ip and geo fields correctly', () => {
-    const geo   = { country: 'US', city: 'NY', isp: 'Comcast', proxy: true, hosting: false };
+  test('maps all ip and geo fields correctly including new Abstract API fields', () => {
+    const geo   = {
+      country: 'US', city: 'NY', isp: 'Comcast', asn: 'AS7922',
+      vpn: true, proxy: false, tor: false, hosting: true, relay: false,
+    };
     const entry = buildHistoryEntry('1.2.3.4', geo);
 
     expect(entry.ip).toBe('1.2.3.4');
     expect(entry.country).toBe('US');
     expect(entry.city).toBe('NY');
     expect(entry.isp).toBe('Comcast');
-    expect(entry.proxy).toBe(true);
-    expect(entry.hosting).toBe(false);
+    expect(entry.asn).toBe('AS7922');
+    expect(entry.vpn).toBe(true);
+    expect(entry.proxy).toBe(false);
+    expect(entry.tor).toBe(false);
+    expect(entry.hosting).toBe(true);
+    expect(entry.relay).toBe(false);
     expect(entry.ts).toBeDefined();
   });
 
-  test('handles missing geo fields gracefully', () => {
+  test('handles missing geo fields gracefully — all default to empty/false', () => {
     const entry = buildHistoryEntry('1.2.3.4', {});
 
     expect(entry.country).toBe('');
     expect(entry.city).toBe('');
+    expect(entry.asn).toBe('');
+    expect(entry.vpn).toBe(false);
     expect(entry.proxy).toBe(false);
+    expect(entry.tor).toBe(false);
+    expect(entry.hosting).toBe(false);
+    expect(entry.relay).toBe(false);
   });
 
   test('handles null geo (privacy mode) gracefully', () => {
@@ -628,7 +720,12 @@ describe('buildHistoryEntry', () => {
 
     expect(entry.country).toBe('');
     expect(entry.isp).toBe('');
+    expect(entry.asn).toBe('');
+    expect(entry.vpn).toBe(false);
     expect(entry.proxy).toBe(false);
+    expect(entry.tor).toBe(false);
+    expect(entry.hosting).toBe(false);
+    expect(entry.relay).toBe(false);
     expect(entry.ip).toBe('1.2.3.4');
   });
 });

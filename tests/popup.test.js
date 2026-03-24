@@ -262,17 +262,19 @@ describe('updateUI — geo info block', () => {
     expect(document.getElementById('geo-isp').textContent).toBe('Deutsche Telekom');
   });
 
-  test('shows Clean VPN status for non-proxy IP', () => {
+  test('shows Clean badge for non-proxy IP', () => {
     global.chrome = makeChromeMock(
       { currentIP: '1.2.3.4', geoInfo: GEO_CLEAN },
       { whitelist: [], enabled: true }
     );
     loadPopup();
-    expect(document.getElementById('geo-vpn').textContent).toContain('Clean');
-    expect(document.getElementById('geo-vpn').classList).toContain('clean');
+    const vpnEl = document.getElementById('geo-vpn');
+    expect(vpnEl.textContent).toContain('Clean');
+    const cleanBadge = vpnEl.querySelector('.vpn-badge.clean');
+    expect(cleanBadge).not.toBeNull();
   });
 
-  test('shows warning badge for proxy/hosting IP', () => {
+  test('shows individual warning badges for proxy/hosting IP', () => {
     global.chrome = makeChromeMock(
       { currentIP: '2.2.2.2', geoInfo: GEO_VPN },
       { whitelist: [], enabled: true }
@@ -280,8 +282,9 @@ describe('updateUI — geo info block', () => {
     loadPopup();
     const vpnEl = document.getElementById('geo-vpn');
     expect(vpnEl.textContent).toContain('Proxy');
-    expect(vpnEl.textContent).toContain('Hosting/VPN');
-    expect(vpnEl.classList).toContain('warning');
+    // Individual badges rendered as separate <span> elements
+    const badges = vpnEl.querySelectorAll('.vpn-badge.warning');
+    expect(badges.length).toBeGreaterThan(0);
   });
 
   test('clears geo when geoInfo absent', () => {
@@ -346,17 +349,18 @@ describe('updateUI — IP history', () => {
     expect(items[1].textContent).toContain('1.1.1.1');
   });
 
-  test('shows proxy/VPN flags in history entry', () => {
+  test('shows individual threat flag badges in history entry', () => {
     const history = [
-      { ip: '3.3.3.3', ts: 1000000, country: 'NL', city: 'Amsterdam', isp: '', proxy: true, hosting: true },
+      { ip: '3.3.3.3', ts: 1000000, country: 'NL', city: 'Amsterdam', isp: '', proxy: true, hosting: true, vpn: true, tor: false, relay: false },
     ];
     global.chrome = makeChromeMock({ ipHistory: history }, {});
     loadPopup();
-    const item  = document.querySelector('#history-list .history-entry');
+    const item   = document.querySelector('#history-list .history-entry');
     expect(item.textContent).toContain('Proxy');
     expect(item.textContent).toContain('VPN');
-    const badge = item.querySelector('.vpn-badge.warning');
-    expect(badge).not.toBeNull();
+    expect(item.textContent).toContain('Hosting');
+    const badges = item.querySelectorAll('.vpn-badge.warning');
+    expect(badges.length).toBe(3); // Proxy + VPN + Hosting
   });
 
   test('clear history button empties ipHistory in local storage', () => {
