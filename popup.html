@@ -25,8 +25,9 @@
         <span id="geo-location"></span>
         <span class="geo-separator" id="geo-sep" style="display:none">·</span>
         <span id="geo-isp"></span>
-        <span id="geo-vpn"></span>
+        <span id="geo-vpn" class="geo-flags"></span>
         <span id="geo-private-msg" class="geo-private" style="display:none">🔒 Geo lookup disabled</span>
+        <span id="api-key-hint" class="geo-hint" style="display:none">💡 Add API key for VPN/Tor/Hosting detection</span>
       </div>
     </div>
 
@@ -100,11 +101,31 @@
       </summary>
       <div class="section-body settings-body">
 
+        <!-- Abstract API key -->
+        <div class="setting-row setting-row--actions">
+          <span class="setting-label">
+            <span class="setting-name">Abstract API key</span>
+            <span class="setting-desc">Enables VPN, Tor, Hosting &amp; Relay detection</span>
+          </span>
+          <div class="setting-buttons">
+            <input
+              type="password"
+              class="ip-input ip-input--sm"
+              id="api-key-input"
+              placeholder="Paste Abstract API key"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Abstract API key for geo detection"
+            />
+            <button class="btn btn-secondary btn-sm" id="api-key-save">Save</button>
+          </div>
+        </div>
+
         <!-- Privacy mode toggle -->
         <label class="setting-row" for="privacy-toggle">
           <span class="setting-label">
             <span class="setting-name">Privacy mode</span>
-            <span class="setting-desc">Skip geo lookup — your IP won't be sent to ipwho.is</span>
+            <span class="setting-desc">Skip geo lookup entirely — no external API calls</span>
           </span>
           <input
             type="checkbox"
